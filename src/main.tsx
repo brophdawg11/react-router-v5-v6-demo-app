@@ -20,6 +20,8 @@ import {
   useLocation as useLocationV6,
   useParams as useParamsV6,
   useNavigate,
+  unstable_Blocker as BlockerV6,
+  unstable_BlockerFunction as BlockerFunctionV6
 } from "react-router-dom-v5-compat";
 
 // Create a source-of-truth data router
@@ -57,19 +59,37 @@ function UniversalRouter() {
     () => ({
       action: router.state.historyAction,
       location: router.state.location,
+      createHref: router.createHref,
       push(to) {
         router.navigate(to);
       },
       replace(to) {
         router.navigate(to, { replace: true });
       },
-      createHref: router.createHref,
+      block(shouldProceed: any) {
+        let blocker: Partial<BlockerV6> = {};
+        const blockerKey = crypto.randomUUID();
+
+        const v6BlockerFn: BlockerFunctionV6 = ({
+          nextLocation,
+          historyAction,
+        }) => {
+          return !shouldProceed(nextLocation, historyAction);
+        };
+
+        blocker = router.getBlocker(blockerKey, v6BlockerFn);
+
+        return () => {
+          blocker.proceed?.();
+          blocker.reset?.();
+          router.deleteBlocker(blockerKey);
+        };
+      },
       listen: () => {},
       // length
       // go
       // goBack
       // goForward
-      // block
     }),
     [router, state]
   );
@@ -97,6 +117,9 @@ function Nav() {
         </li>
         <li>
           <LinkV6 to="/a">/a</LinkV6>
+        </li>
+        <li>
+          <LinkV6 to="/a/blocker">/a/blocker</LinkV6>
         </li>
         <li>
           <LinkV6 to="/a/one">/a/one</LinkV6>
@@ -159,6 +182,9 @@ function A() {
       <div style={{ border: "1px solid grey", padding: "10px" }}>
         <p>Rendered sub-tree using v5 &lt;Switch&gt;</p>
         <Switch>
+          <RouteV5 path="/a/blocker">
+            <BlockerComponent />
+          </RouteV5>
           <RouteV5 path="/a/:param">
             <AParam />
           </RouteV5>
@@ -208,4 +234,44 @@ function V6Child() {
       <button onClick={() => navigate("/")}>Go to /</button>
     </>
   );
+}
+
+function BlockerComponent() {
+  let history = useHistory();
+  let [text, setText] = React.useState('');
+
+  console.log(history);
+
+  React.useEffect(() => {
+    // I think the signature of the blocker function may have changed in later verions
+    // 5.1.2 passes posisional arguments, but latest v5 docs show an object passed to the blocker fn
+    let unblock = history.block(nextLocation => {
+      if (!text) {
+        unblock();
+        return true;
+      }
+
+      // Navigation was blocked! Let's show a confirmation dialog
+      // so the user can decide if they actually want to navigate
+      // away and discard changes they've made in the current page.
+      let url = nextLocation.pathname;
+      if (window.confirm(`Are you sure you want to go to ${url}?`)) {
+        // Unblock the navigation.
+        unblock();
+        return true;
+
+        // Retry the transition.
+        // tx.retry();
+      }
+
+      // false should block
+      return false;
+    });
+
+    return unblock;
+  }, [history, text]);
+
+  return (
+    <input type="text" onChange={e => setText(e.target.value)} value={text} />
+  )
 }
